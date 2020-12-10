@@ -14,45 +14,22 @@ from PIL import Image
 
 from model import EmotionClassifier
 
-def model_fn(model_dir):
-    """Load the PyTorch model from the `model_dir` directory."""
-    print("Loading model.")
 
-    """# First, load the parameters used to create the model.
-    model_info = {}
-    model_info_path = os.path.join(model_dir, 'model_info.pth')
-    with open(model_info_path, 'rb') as f:
-        model_info = torch.load(f)
-
-    print("model_info: {}".format(model_info))
-"""
-    # Determine the device and construct the model.
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model = EmotionClassifier()
-
-    # Load the stored model parameters.
-    model_path = os.path.join(model_dir, 'model.pth')
-    with open(model_path, 'rb') as f:
-        model.load_state_dict(torch.load(f))
-
-    model.to(device).eval()
-
-    print("Done loading model.")
-    return model
 
 def _get_train_and_valid_data_loader(batchSize, train_dir, valid_dir):
     print("Get train and valid data loader.")
 
-    train_transforms = transforms.Compose([transforms.Grayscale(1),
-                                       transforms.RandomRotation(30),
+    train_transforms = transforms.Compose([transforms.RandomRotation(30),
+                                           transforms.RandomResizedCrop(224),
                                        transforms.RandomHorizontalFlip(),
-                                       transforms.Resize((224,224)),
                                        transforms.ToTensor(),
-                                       transforms.Normalize((0.5, ), (0.5, ))])
-    valid_transforms = transforms.Compose([transforms.Grayscale(1),
-                                       transforms.Resize((224,224)),
+                                       transforms.Normalize(mean=[0.485, 0.456, 0.406],
+                                                             std=[0.229, 0.224, 0.225])])
+    valid_transforms = transforms.Compose([transforms.Resize(255),
+                                           transforms.CenterCrop(224),
                                        transforms.ToTensor(),
-                                       transforms.Normalize((0.5, ), (0.5, ))])
+                                       transforms.Normalize(mean=[0.485, 0.456, 0.406],
+                                                             std=[0.229, 0.224, 0.225])])
     train_data = datasets.ImageFolder(train_dir, transform=train_transforms)
     valid_data = datasets.ImageFolder(valid_dir, transform=valid_transforms)
 
@@ -91,7 +68,7 @@ def train(model, train_loader, valid_loader, epochs, optimizer, loss_fn, device)
             # TODO: Complete this train method to train the model provided.
             optimizer.zero_grad()
 
-            logps = model.forward(batch_X)
+            logps = model(batch_X).to(device)
             loss = loss_fn(softmax(logps), batch_y)
             loss.backward()
             optimizer.step()
@@ -103,7 +80,7 @@ def train(model, train_loader, valid_loader, epochs, optimizer, loss_fn, device)
         with torch.no_grad():
             for inputs, labels in valid_loader:
                 inputs, labels = inputs.to(device), labels.to(device)
-                logps = model.forward(inputs)
+                logps = model(inputs).to(device)
                 batch_loss = loss_fn(softmax(logps), labels)
 
                 valid_loss += batch_loss.item()
@@ -165,7 +142,21 @@ if __name__ == '__main__':
     train_loader , valid_loader = _get_train_and_valid_data_loader(args.batch_size, train_dir, valid_dir)
 
     # Build the model.
-    model = EmotionClassifier().to(device)
+    model = models.vgg16(pretrained=True)
+    model.classifier = nn.Sequential(nn.Linear(25088, 4096),
+                                         nn.ReLU(),
+                                         nn.Dropout(0.2),
+                                         nn.Linear(4096, 1024),
+                                         nn.ReLU(),
+                                         nn.Dropout(0.2),
+                                         nn.Linear(1024,512),
+                                         nn.ReLU(),
+                                         nn.Dropout(0.2),
+                                         nn.Linear(512, 7))
+                                         
+    #[6] = nn.Linear(4096,7)
+    
+    model = model.to(device)
 
     """print("Model loaded with hidden_dim {} ".format(
         args.embedding_dim, args.hidden_dim, args.vocab_size
@@ -188,6 +179,6 @@ if __name__ == '__main__':
 """
 
 	# Save the model parameters
-    model_path = os.path.join(args.model_dir, 'model.pth')
+    model_path = os.path.join(args.model_dir, 'modelVGG.pth')
     with open(model_path, 'wb') as f:
         torch.save(model.cpu().state_dict(), f)

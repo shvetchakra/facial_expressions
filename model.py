@@ -63,6 +63,7 @@ class EmotionClassifier(nn.Module):
 
     # Defining the forward pass    
     def forward(self, x):
+        #softmax = nn.LogSoftmax(dim=1)
         x = self.cnn_layers(x)
         x = x.view(x.size(0), -1)
         x = self.linear_layers(x)
