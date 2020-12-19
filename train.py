@@ -18,14 +18,7 @@ def model_fn(model_dir):
     """Load the PyTorch model from the `model_dir` directory."""
     print("Loading model.")
 
-    """# First, load the parameters used to create the model.
-    model_info = {}
-    model_info_path = os.path.join(model_dir, 'model_info.pth')
-    with open(model_info_path, 'rb') as f:
-        model_info = torch.load(f)
-
-    print("model_info: {}".format(model_info))
-"""
+    
     # Determine the device and construct the model.
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = EmotionClassifier()
@@ -35,7 +28,7 @@ def model_fn(model_dir):
     with open(model_path, 'rb') as f:
         model.load_state_dict(torch.load(f))
 
-    model.to(device).eval()
+    
 
     print("Done loading model.")
     return model
@@ -43,16 +36,18 @@ def model_fn(model_dir):
 def _get_train_and_valid_data_loader(batchSize, train_dir, valid_dir):
     print("Get train and valid data loader.")
 
-    train_transforms = transforms.Compose([transforms.Grayscale(1),
-                                       transforms.RandomRotation(30),
+    train_transforms = transforms.Compose([transforms.RandomRotation(30),
                                        transforms.RandomHorizontalFlip(),
-                                       transforms.Resize((224,224)),
+                                       transforms.RandomResizedCrop(224),
                                        transforms.ToTensor(),
-                                       transforms.Normalize((0.5, ), (0.5, ))])
-    valid_transforms = transforms.Compose([transforms.Grayscale(1),
-                                       transforms.Resize((224,224)),
+                                       transforms.Normalize(mean=[0.485, 0.456, 0.406],
+                                                             std=[0.229, 0.224, 0.225])])
+    valid_transforms = transforms.Compose([transforms.RandomRotation(30),
+                                       transforms.RandomHorizontalFlip(),
+                                       transforms.CenterCrop(224),
                                        transforms.ToTensor(),
-                                       transforms.Normalize((0.5, ), (0.5, ))])
+                                       transforms.Normalize(mean=[0.485, 0.456, 0.406],
+                                                             std=[0.229, 0.224, 0.225])])
     train_data = datasets.ImageFolder(train_dir, transform=train_transforms)
     valid_data = datasets.ImageFolder(valid_dir, transform=valid_transforms)
 
@@ -82,20 +77,17 @@ def train(model, train_loader, valid_loader, epochs, optimizer, loss_fn, device)
         model.train()
         total_loss = 0
         for batch in train_loader:         
-        #for batch_idx, (data, target) in enumerate(train_loader):
             batch_X, batch_y = batch
-            
             batch_X = batch_X.to(device)
-            batch_y = batch_y.to(device)
-            
-            # TODO: Complete this train method to train the model provided.
-            optimizer.zero_grad()
+            batch_y = batch_y.to(device)         
 
+            optimizer.zero_grad()
             logps = model.forward(batch_X)
             loss = loss_fn(softmax(logps), batch_y)
             loss.backward()
             optimizer.step()
             total_loss += loss.data.item()
+            
         print("Epoch: {}, NLLLoss: {}".format(epoch, total_loss / len(train_loader)))
         model.eval()
         valid_loss = 0
@@ -121,7 +113,7 @@ def train(model, train_loader, valid_loader, epochs, optimizer, loss_fn, device)
       f"Validation accuracy: {valid_acc:.3f}")
         
         model.train()
-        if valid_acc-prev_acc < .1 and valid_acc > .9:
+        if valid_loss-total_loss > .1 and valid_acc > .62:
             break
         else:
             prev_acc = valid_acc
@@ -133,9 +125,9 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
 
     # Training Parameters
-    parser.add_argument('--batch-size', type=int, default=64, metavar='N',
+    parser.add_argument('--batch-size', type=int, default=96, metavar='N',
                         help='input batch size for training (default: 64)')
-    parser.add_argument('--epochs', type=int, default=150, metavar='N',
+    parser.add_argument('--epochs', type=int, default=100, metavar='N',
                         help='number of epochs to train (default: 10)')
     parser.add_argument('--seed', type=int, default=1, metavar='S',
                         help='random seed (default: 1)')
@@ -143,12 +135,13 @@ if __name__ == '__main__':
     # Model Parameters
     parser.add_argument('--learning_rate', type=float, default=0.001, metavar='N',
                         help='Learning rate (default: 0.001)')
-
+    parser.add_argument('--resume_training', type=bool, default=False,
+                        help='If you like to resume the training')
 
     # SageMaker Parameters
     parser.add_argument('--hosts', type=list, default=json.loads(os.environ['SM_HOSTS']))
     parser.add_argument('--current-host', type=str, default=os.environ['SM_CURRENT_HOST'])
-    parser.add_argument('--model-dir', type=str, default=os.environ['SM_MODEL_DIR'])
+    parser.add_argument('--model_dir', type=str, default=os.environ['SM_MODEL_DIR'])
     parser.add_argument('--data-dir', type=str, default=os.environ['SM_CHANNEL_TRAINING'])
     parser.add_argument('--num-gpus', type=int, default=os.environ['SM_NUM_GPUS'])
 
@@ -165,8 +158,14 @@ if __name__ == '__main__':
     train_loader , valid_loader = _get_train_and_valid_data_loader(args.batch_size, train_dir, valid_dir)
 
     # Build the model.
-    model = EmotionClassifier().to(device)
-
+    model = None
+    model_dir=args.data_dir
+    print("Model Dir: {}".format(model_dir))
+    if args.resume_training:
+        model = model_fn(model_dir)
+    else:
+        model = EmotionClassifier()
+    model = model.to(device)
     """print("Model loaded with hidden_dim {} ".format(
         args.embedding_dim, args.hidden_dim, args.vocab_size
     ))"""
@@ -177,15 +176,7 @@ if __name__ == '__main__':
 
     train(model, train_loader, valid_loader, args.epochs, optimizer, loss_fn, device)
 
-    # Save the parameters used to construct the model
-    """model_info_path = os.path.join(args.model_dir, 'model_info.pth')
-    with open(model_info_path, 'wb') as f:
-        model_info = {
-            'hidden_dim': args.hidden_dim
-            
-        }
-        torch.save(model_info, f)
-"""
+    
 
 	# Save the model parameters
     model_path = os.path.join(args.model_dir, 'model.pth')
